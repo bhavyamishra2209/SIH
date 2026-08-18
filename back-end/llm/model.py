@@ -4,6 +4,7 @@ Language model integration for generating responses.
 
 import os
 import logging
+import re
 from typing import Optional, Dict, Any, List
 import json
 
@@ -218,50 +219,90 @@ class LocalLLM(BaseLLM):
     
     def _generate_answer(self, chunks: List[str], question: str) -> str:
         """Generate an answer to a question from document chunks."""
-        # Combine all chunks for a more comprehensive search
-        combined_text = ' '.join(chunks)
+        # Clean up chunks - remove extra quotes
+        cleaned_chunks = []
+        for chunk in chunks:
+            # Remove leading/trailing quotes and whitespace
+            cleaned = chunk.strip().strip('"').strip("'").strip()
+            if cleaned:
+                cleaned_chunks.append(cleaned)
         
-        # Extract key terms from the question (remove common words)
-        stop_words = {'what', 'is', 'the', 'a', 'an', 'are', 'how', 'where', 'when', 'who', 'why', 'which', 'do', 'does'}
+        if not cleaned_chunks:
+            return "I don't have enough information to answer that specific question."
+        
+        # Combine all chunks for comprehensive search
+        combined_text = ' '.join(cleaned_chunks)
+        combined_lower = combined_text.lower()
+        question_lower = question.lower()
+        
+        # Extract key terms from the question (remove stop words)
+        stop_words = {'what', 'is', 'the', 'a', 'an', 'are', 'how', 'where', 'when', 'who', 'why', 'which', 'do', 'does', 'can', 'could', 'would', 'should'}
         question_words = [w.lower() for w in question.split() if w.lower() not in stop_words and len(w) > 2]
         
-        # Try to find relevant information in the combined text
-        combined_lower = combined_text.lower()
+        # Special handling for simple "what is X?" type questions
+        if question_lower.startswith('what is'):
+            # Extract what's being asked about
+            asked_about = question_lower.replace('what is', '').replace('the', '').replace('?', '').strip()
+            
+            if asked_about:
+                # Look for "X: value" or "X = value" pattern in the text
+                import re
+                # Pattern: word followed by colon or equals, then value
+                pattern = rf'{re.escape(asked_about)}\s*[:=]\s*([^.,;]+)'
+                match = re.search(pattern, combined_lower)
+                
+                if match:
+                    answer_value = match.group(1).strip()
+                    # Find the actual case-sensitive version from original text
+                    original_match = re.search(rf'{re.escape(asked_about)}\s*[:=]\s*([^.,;]+)', combined_text, re.IGNORECASE)
+                    if original_match:
+                        answer_value = original_match.group(1).strip()
+                    return f"The {asked_about} is {answer_value}."
         
-        # Check if any question words appear in the text
+        # Try to find sentences containing the question words
         relevant_sentences = []
-        for chunk in chunks:
-            sentences = chunk.split('.')
+        for chunk in cleaned_chunks:
+            # Split by common sentence delimiters
+            sentences = re.split(r'[.!?]\s+', chunk)
             for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                    
                 sentence_lower = sentence.lower()
-                # If the sentence contains any question word, it's likely relevant
+                # Check if sentence contains any question keywords
                 if any(word in sentence_lower for word in question_words):
-                    relevant_sentences.append(sentence.strip())
+                    relevant_sentences.append(sentence)
         
         # If we found relevant sentences, return them
         if relevant_sentences:
-            # Return the most relevant sentences (up to 3)
-            answer_text = '. '.join(relevant_sentences[:3])
+            answer_text = '. '.join(relevant_sentences[:2])
             if not answer_text.endswith('.'):
                 answer_text += '.'
             return f"Based on the documents, {answer_text}"
         
-        # Fallback: check if the whole chunk seems relevant
-        for chunk in chunks:
-            # Count how many question words appear in this chunk
+        # Fallback: return the most relevant chunk
+        best_chunk = None
+        best_score = 0
+        
+        for chunk in cleaned_chunks:
             chunk_lower = chunk.lower()
+            # Count question word matches
             score = sum(1 for word in question_words if word in chunk_lower)
             
-            if score > 0 or len(question_words) == 0:
-                # This chunk seems relevant, return it
-                sentences = chunk.split('.')
-                # Get the first few sentences
-                relevant_text = '. '.join(s.strip() for s in sentences[:min(3, len(sentences))] if s.strip())
-                if relevant_text and not relevant_text.endswith('.'):
+            # Even if score is 0, use the chunk if we only have one
+            if score > best_score or (len(cleaned_chunks) == 1 and best_chunk is None):
+                best_score = score
+                best_chunk = chunk
+        
+        if best_chunk:
+            # Return the chunk with some context
+            sentences = re.split(r'[.!?]\s+', best_chunk)
+            relevant_text = '. '.join(s.strip() for s in sentences[:3] if s.strip())
+            if relevant_text:
+                if not relevant_text.endswith('.'):
                     relevant_text += '.'
-                    
-                if relevant_text:
-                    return f"Based on the documents, {relevant_text}"
+                return f"Based on the documents, {relevant_text}"
         
         return "I don't have enough information to answer that specific question."
     
