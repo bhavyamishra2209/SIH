@@ -47,10 +47,21 @@ try:
     vector_db = FaissVectorDatabase(dimension=embedder.dimension)
     logger.info("✓ Vector database created")
     
-    logger.info("Step 3: Creating LLM...")
-    from llm.model import create_llm
-    llm = create_llm()
-    logger.info("✓ LLM created")
+    logger.info("Step 3: Creating LLM (HuggingFace)...")
+    from llm.serverless_model import HuggingFaceInferenceAPI
+    import os
+    
+    # Get HuggingFace API key from environment
+    hf_token = os.getenv("HUGGINGFACE_API_KEY")
+    if not hf_token:
+        logger.warning("⚠️  HUGGINGFACE_API_KEY not set! Using free tier (may be slow/limited)")
+        logger.warning("Get your free token from: https://huggingface.co/settings/tokens")
+    
+    llm = HuggingFaceInferenceAPI(
+        model_name="mistralai/Mistral-7B-Instruct-v0.2",  # Fast, accurate model
+        api_key=hf_token
+    )
+    logger.info("✓ HuggingFace LLM created (FREE tier)")
     
     logger.info("Step 4: Creating RAG engine...")
     from rag.engine import RAGEngine
