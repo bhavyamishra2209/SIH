@@ -385,6 +385,7 @@ class RAGAPIRouter:
             """
             try:
                 # Query RAG engine
+                logger.info(f"Processing query: {query_input.query}")
                 result = self.rag_engine.generate_response(
                     query=query_input.query,
                     top_k=query_input.top_k,
@@ -392,6 +393,9 @@ class RAGAPIRouter:
                     filter_dict=query_input.filter_dict,
                     max_tokens=query_input.max_tokens
                 )
+                
+                logger.info(f"Generated response: {result.get('response', 'N/A')[:100]}...")
+                logger.info(f"Retrieved {len(result.get('retrieved_documents', []))} documents")
 
                 # Convert to response model
                 return RAGResponse(
@@ -418,7 +422,7 @@ class RAGAPIRouter:
                     ]
                 )
             except Exception as e:
-                logger.error(f"Error querying RAG system: {e}")
+                logger.error(f"Error querying RAG system: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Failed to query system: {str(e)}")
 
         @self.app.get("/search", summary="Search for documents without generating a response")
