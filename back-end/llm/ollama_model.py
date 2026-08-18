@@ -82,7 +82,7 @@ class OllamaLLM(BaseLLM):
             response = requests.post(
                 self.url,
                 json=payload,
-                timeout=60  # Ollama can be slow first time
+                timeout=120  # Ollama can be slow first time (increased to 2 minutes)
             )
             
             if response.status_code != 200:
