@@ -44,7 +44,7 @@ try:
     
     logger.info("Step 2: Creating vector database...")
     from storage.vector_db import FaissVectorDatabase
-    vector_db = FaissVectorDatabase(embedder)
+    vector_db = FaissVectorDatabase(dimension=embedder.dimension)
     logger.info("✓ Vector database created")
     
     logger.info("Step 3: Creating LLM...")
