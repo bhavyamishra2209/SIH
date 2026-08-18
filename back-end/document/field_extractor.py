@@ -106,31 +106,49 @@ class FieldExtractor:
         
         field_list_str = "\n".join(field_descriptions)
         
-        instructions = f"""Extract the following fields from the document:
+        instructions = f"""Extract the following fields from the document text.
 
+Document text:
+{full_text}
+
+Fields to extract:
 {field_list_str}
 
-Return ONLY valid JSON in this exact format:
+For each field, find the value in the text above. Look for patterns like "Field Name: Value".
+
+Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {{
   "field_name": {{"value": "extracted_value", "confidence": 0.95}},
   "another_field": {{"value": "another_value", "confidence": 0.85}}
 }}
 
-Rules:
-- If a field is not found in the document, set value to null and confidence to 0.0
-- Confidence should be between 0.0 (not confident) and 1.0 (very confident)
-- Extract dates in YYYY-MM-DD format when possible
-- Extract numbers without currency symbols or commas for numeric fields
-- Be precise and extract only what is explicitly stated in the document"""
+Examples:
+- If text contains "Name: John Smith", extract {{"applicant_name": {{"value": "John Smith", "confidence": 0.95}}}}
+- If text contains "Date: 15/03/1995", extract {{"date_filed": {{"value": "15/03/1995", "confidence": 0.95}}}}
+- If a field is not found, use {{"field_name": {{"value": null, "confidence": 0.0}}}}
 
-        prompt = f"Context:\n{full_text}\n\nQuestion: {instructions}\n\nAnswer:"
+Rules:
+- Extract exactly what appears in the document
+- Confidence should be 0.9-1.0 if clearly found, 0.0 if not found
+- Do not invent or guess values
+- For dates, keep the format as shown in the document
+- For addresses, include the full address as shown"""
+
+        prompt = f"{instructions}"
         
         # Generate extraction using LLM
         try:
-            raw_response = self.rag_engine._generate_llm_response(prompt, max_tokens=512)
+            # Use the LLM directly to generate response
+            if hasattr(self.rag_engine, 'llm') and self.rag_engine.llm:
+                raw_response = self.rag_engine.llm.generate_response(prompt, max_tokens=512)
+            else:
+                logger.error("No LLM available in RAG engine")
+                raw_response = "{}"
+            
+            logger.info(f"LLM extraction response: {raw_response[:200]}...")
             parsed_fields = self._parse_llm_response(raw_response, fields)
         except Exception as e:
-            logger.error(f"LLM extraction failed: {e}")
+            logger.error(f"LLM extraction failed: {e}", exc_info=True)
             parsed_fields = [
                 {"field": self._get_field_name(f), "value": None, "confidence": 0.0}
                 for f in fields
