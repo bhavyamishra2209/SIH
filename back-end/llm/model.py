@@ -239,22 +239,37 @@ class LocalLLM(BaseLLM):
         stop_words = {'what', 'is', 'the', 'a', 'an', 'are', 'how', 'where', 'when', 'who', 'why', 'which', 'do', 'does', 'can', 'could', 'would', 'should'}
         question_words = [w.lower() for w in question.split() if w.lower() not in stop_words and len(w) > 2]
         
-        # Special handling for simple "what is X?" type questions
-        if question_lower.startswith('what is'):
+        # Special handling for "what" questions
+        if question_lower.startswith('what'):
             # Extract what's being asked about
-            asked_about = question_lower.replace('what is', '').replace('the', '').replace('?', '').strip()
+            asked_about = question_lower.replace('what is', '').replace('what', '').replace('the', '').replace('?', '').strip()
             
-            if asked_about:
+            # Handle "what type of X?" questions
+            if 'type of' in question_lower or 'type' in question_lower:
+                # Look for common type patterns
+                type_patterns = [
+                    r'(?:license\s+)?type\s*[:=]\s*([^,.\n]+)',
+                    r'type\s+of\s+license\s*[:=]\s*([^,.\n]+)',
+                    r'class\s+([A-Z])',  # License classes like "Class B"
+                ]
+                
+                for pattern in type_patterns:
+                    match = re.search(pattern, combined_text, re.IGNORECASE)
+                    if match:
+                        answer_value = match.group(1).strip()
+                        return f"The license type is {answer_value}."
+            
+            # Handle standard "what is X?" questions
+            elif asked_about:
                 # Look for "X: value" or "X = value" pattern in the text
-                import re
                 # Pattern: word followed by colon or equals, then value
-                pattern = rf'{re.escape(asked_about)}\s*[:=]\s*([^.,;]+)'
+                pattern = rf'{re.escape(asked_about)}\s*[:=]\s*([^,.\n]+)'
                 match = re.search(pattern, combined_lower)
                 
                 if match:
                     answer_value = match.group(1).strip()
                     # Find the actual case-sensitive version from original text
-                    original_match = re.search(rf'{re.escape(asked_about)}\s*[:=]\s*([^.,;]+)', combined_text, re.IGNORECASE)
+                    original_match = re.search(rf'{re.escape(asked_about)}\s*[:=]\s*([^,.\n]+)', combined_text, re.IGNORECASE)
                     if original_match:
                         answer_value = original_match.group(1).strip()
                     return f"The {asked_about} is {answer_value}."
