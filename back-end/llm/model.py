@@ -252,6 +252,8 @@ class LocalLLM(BaseLLM):
             'application date': 'application date',
             'filed': 'application date',
             'date filed': 'application date',
+            'color': 'colour',
+            'colour': 'colour',
         }
         
         # Try to find which field is being asked about
@@ -273,6 +275,10 @@ class LocalLLM(BaseLLM):
                 r'license\s+type\s*[:=]\s*([^\n]+?)(?:\s+Application|$)' if asked_field == 'license type' else None,
                 r'class\s+([A-Z])(?:\s|,|$)' if asked_field == 'license type' else None,
                 r'application\s+date\s*[:=]\s*([^\n]+?)(?:\s+[A-Z]|$)' if asked_field == 'application date' else None,
+                # Color patterns
+                r'(?:is|are)\s+(red|blue|green|yellow|orange|purple|pink|black|white|brown|grey|gray)(?:\s|,|\.|$)' if asked_field in ['color', 'colour'] else None,
+                r'(red|blue|green|yellow|orange|purple|pink|black|white|brown|grey|gray)\s+(?:in\s+)?colou?r' if asked_field in ['color', 'colour'] else None,
+                r'colou?r\s*[:=]?\s*(red|blue|green|yellow|orange|purple|pink|black|white|brown|grey|gray)' if asked_field in ['color', 'colour'] else None,
             ]
             
             # Remove None patterns
@@ -297,6 +303,8 @@ class LocalLLM(BaseLLM):
                         return f"The license type is {value}."
                     elif asked_field == 'application date':
                         return f"The application date is {value}."
+                    elif asked_field in ['color', 'colour']:
+                        return f"The color is {value}."
                     else:
                         return f"The {asked_field} is {value}."
         
