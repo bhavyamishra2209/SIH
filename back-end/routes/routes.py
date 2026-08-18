@@ -215,8 +215,13 @@ class RAGAPIRouter:
                                 doc_ref.update({"status": "OCR"})
                             except:
                                 pass
+                        
+                        # Open image, extract text, then close immediately
                         image = Image.open(temp_path)
-                        text, ocr_confidence = extract_text_from_image(image)
+                        try:
+                            text, ocr_confidence = extract_text_from_image(image)
+                        finally:
+                            image.close()  # Always close the image file handle
 
                         if not text.strip():
                             if doc_ref:
