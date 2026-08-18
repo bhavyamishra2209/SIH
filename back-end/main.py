@@ -43,8 +43,8 @@ try:
     logger.info("✓ Embedding model created")
     
     logger.info("Step 2: Creating vector database...")
-    from storage.vector_db import VectorDatabase
-    vector_db = VectorDatabase(embedder)
+    from storage.vector_db import FaissVectorDatabase
+    vector_db = FaissVectorDatabase(embedder)
     logger.info("✓ Vector database created")
     
     logger.info("Step 3: Creating LLM...")
