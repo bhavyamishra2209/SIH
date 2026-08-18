@@ -397,7 +397,15 @@ class RAGAPIRouter:
                 return RAGResponse(
                     query=result["query"],
                     response=result["response"],
-                    retrieved_documents=[...],  # unchanged
+                    retrieved_documents=[
+                        SearchResult(
+                            id=doc["id"],
+                            text=doc["text"],
+                            metadata=doc["metadata"],
+                            score=doc["score"]
+                        )
+                        for doc in result["retrieved_documents"]
+                    ],
                     search_type=result["search_type"],
                     evidence=[
                         {
