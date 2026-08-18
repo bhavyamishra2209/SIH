@@ -264,13 +264,15 @@ class LocalLLM(BaseLLM):
         if asked_field:
             # Look for the field value in the text using various patterns
             field_patterns = [
-                rf'{re.escape(asked_field)}\s*[:=]\s*([^,\n]+)',
-                rf'(?:applicant\s+)?{re.escape(asked_field)}\s*[:=]\s*([^,\n]+)',
-                # Special patterns
-                r'name\s*[:=]\s*([^,\n]+)' if asked_field == 'name' else None,
-                r'address\s*[:=]\s*([^,\n]+(?:,\s*[^,\n]+)*)' if asked_field == 'address' else None,
-                r'license\s+type\s*[:=]\s*([^,\n]+)' if asked_field == 'license type' else None,
-                r'class\s+([A-Z])' if asked_field == 'license type' else None,
+                rf'{re.escape(asked_field)}\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',  # Stop at next field or end
+                rf'(?:applicant\s+)?{re.escape(asked_field)}\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',
+                # Special patterns for each field
+                r'name\s*[:=]\s*([^\n]+?)(?:\s+Date|$)' if asked_field == 'name' else None,
+                r'date\s+of\s+birth\s*[:=]\s*([^\n]+?)(?:\s+Address|$)' if asked_field == 'date of birth' else None,
+                r'address\s*[:=]\s*([^\n]+?)(?:\s+License|$)' if asked_field == 'address' else None,
+                r'license\s+type\s*[:=]\s*([^\n]+?)(?:\s+Application|$)' if asked_field == 'license type' else None,
+                r'class\s+([A-Z])(?:\s|,|$)' if asked_field == 'license type' else None,
+                r'application\s+date\s*[:=]\s*([^\n]+?)(?:\s+[A-Z]|$)' if asked_field == 'application date' else None,
             ]
             
             # Remove None patterns
@@ -280,8 +282,9 @@ class LocalLLM(BaseLLM):
                 match = re.search(pattern, combined_text, re.IGNORECASE)
                 if match:
                     value = match.group(1).strip()
-                    # Clean up the value
-                    value = value.split(',')[0].strip() if ',' in value and asked_field != 'address' else value.strip()
+                    # Clean up the value - remove trailing punctuation and extra spaces
+                    value = re.sub(r'\s+', ' ', value)  # Normalize spaces
+                    value = value.rstrip(',.')  # Remove trailing punctuation
                     
                     # Format the answer nicely
                     if asked_field == 'name':
