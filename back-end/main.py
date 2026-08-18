@@ -34,46 +34,106 @@ app.add_middleware(
 
 # Initialize RAG engine
 logger.info("Initializing RAG engine...")
+rag_engine = None
+
 try:
-    from rag.engine import RAGEngine
-    from config import get_model_config
+    logger.info("Step 1: Creating embedding model...")
+    from embedding.model import create_embedding_model
+    embedder = create_embedding_model()
+    logger.info("✓ Embedding model created")
     
-    config = get_model_config()
+    logger.info("Step 2: Creating vector database...")
+    from storage.vector_db import VectorDatabase
+    vector_db = VectorDatabase(embedder)
+    logger.info("✓ Vector database created")
+    
+    logger.info("Step 3: Creating LLM...")
+    from llm.model import create_llm
+    llm = create_llm()
+    logger.info("✓ LLM created")
+    
+    logger.info("Step 4: Creating RAG engine...")
+    from rag.engine import RAGEngine
     rag_engine = RAGEngine(
-        use_serverless=config.get("use_serverless", False)
+        embedder=embedder,
+        vector_db=vector_db,
+        llm=llm,
+        top_k=5,
+        search_type="hybrid"
     )
-    logger.info("✓ RAG engine initialized")
+    logger.info("✓ RAG engine initialized successfully")
+    
+except ImportError as e:
+    logger.error(f"Import error while initializing RAG engine: {e}")
+    logger.warning("Some modules may be missing. Install with: pip install -r requirements.txt")
+    logger.info("Starting API in limited mode - /health endpoint will work")
+    
 except Exception as e:
     logger.error(f"Failed to initialize RAG engine: {e}")
     logger.warning("Starting API without RAG engine - limited functionality")
-    rag_engine = None
+    import traceback
+    logger.debug(traceback.format_exc())
 
 # Register routes
 if rag_engine:
-    from routes.routes import RAGAPIRouter
-    router = RAGAPIRouter(app, rag_engine)
-    logger.info("✓ API routes registered")
+    try:
+        from routes.routes import RAGAPIRouter
+        router = RAGAPIRouter(app, rag_engine)
+        logger.info("✓ API routes registered")
+    except Exception as e:
+        logger.error(f"Failed to register routes: {e}")
+        logger.warning("API will only have basic endpoints")
 else:
-    # Minimal health check if RAG engine fails
-    @app.get("/health")
-    async def health_check():
-        return {
-            "status": "degraded",
-            "version": "1.0.0",
-            "message": "RAG engine not initialized"
-        }
+    logger.warning("RAG engine not available - registering minimal endpoints only")
 
+# Always available endpoints
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
     return {
         "name": "Document Intelligence Workspace API",
         "version": "1.0.0",
-        "status": "operational" if rag_engine else "degraded",
+        "status": "operational" if rag_engine else "limited",
+        "rag_engine": "ready" if rag_engine else "not initialized",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "message": "API is running" if rag_engine else "API is running in limited mode - RAG engine not initialized"
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint - always available."""
+    return {
+        "status": "healthy" if rag_engine else "degraded",
+        "version": "1.0.0",
+        "rag_engine": "initialized" if rag_engine else "not initialized",
+        "document_count": rag_engine.count_documents() if rag_engine else 0,
+        "message": "System is operational" if rag_engine else "RAG engine not initialized - install dependencies and restart"
+    }
+
+@app.get("/status")
+async def status():
+    """Detailed status endpoint."""
+    return {
+        "api": "running",
+        "version": "1.0.0",
+        "components": {
+            "rag_engine": "ready" if rag_engine else "not initialized",
+            "vector_db": "ready" if rag_engine and hasattr(rag_engine, 'vector_db') else "not initialized",
+            "llm": "ready" if rag_engine and hasattr(rag_engine, 'llm') else "not initialized",
+            "embedder": "ready" if rag_engine and hasattr(rag_engine, 'embedder') else "not initialized",
+        },
+        "endpoints": {
+            "root": "/",
+            "health": "/health",
+            "docs": "/docs",
+            "upload": "/upload" if rag_engine else "unavailable",
+            "query": "/query" if rag_engine else "unavailable",
+            "search": "/search" if rag_engine else "unavailable"
+        }
     }
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info("Starting FastAPI server...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
