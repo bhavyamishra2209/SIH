@@ -15,7 +15,7 @@ from PIL import Image
 
 from storage.firebase_client import get_db, get_bucket
 from document.ocr_processor import extract_text_from_image
-from document.classifier import DocumentClassifier
+from document.document_classifier import DocumentClassifier
 from document.field_extractor import FieldExtractor
 
 # Configure logging
