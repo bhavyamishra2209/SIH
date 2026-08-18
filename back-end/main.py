@@ -103,11 +103,22 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint - always available."""
+    doc_count = 0
+    if rag_engine:
+        try:
+            # Try to get document count if method exists
+            if hasattr(rag_engine, 'count_documents'):
+                doc_count = rag_engine.count_documents()
+            elif hasattr(rag_engine, 'vector_db') and hasattr(rag_engine.vector_db, 'count'):
+                doc_count = rag_engine.vector_db.count()
+        except:
+            doc_count = 0
+    
     return {
         "status": "healthy" if rag_engine else "degraded",
         "version": "1.0.0",
         "rag_engine": "initialized" if rag_engine else "not initialized",
-        "document_count": rag_engine.count_documents() if rag_engine else 0,
+        "document_count": doc_count,
         "message": "System is operational" if rag_engine else "RAG engine not initialized - install dependencies and restart"
     }
 
