@@ -239,7 +239,65 @@ class LocalLLM(BaseLLM):
         stop_words = {'what', 'is', 'the', 'a', 'an', 'are', 'how', 'where', 'when', 'who', 'why', 'which', 'do', 'does', 'can', 'could', 'would', 'should'}
         question_words = [w.lower() for w in question.split() if w.lower() not in stop_words and len(w) > 2]
         
-        # Special handling for "what" questions
+        # Define field mappings - map question terms to document field names
+        field_mappings = {
+            'applicant': 'name',
+            'name': 'name',
+            'address': 'address',
+            'date of birth': 'date of birth',
+            'dob': 'date of birth',
+            'birth': 'date of birth',
+            'license type': 'license type',
+            'type': 'license type',
+            'application date': 'application date',
+            'filed': 'application date',
+            'date filed': 'application date',
+        }
+        
+        # Try to find which field is being asked about
+        asked_field = None
+        for term, field in field_mappings.items():
+            if term in question_lower:
+                asked_field = field
+                break
+        
+        if asked_field:
+            # Look for the field value in the text using various patterns
+            field_patterns = [
+                rf'{re.escape(asked_field)}\s*[:=]\s*([^,\n]+)',
+                rf'(?:applicant\s+)?{re.escape(asked_field)}\s*[:=]\s*([^,\n]+)',
+                # Special patterns
+                r'name\s*[:=]\s*([^,\n]+)' if asked_field == 'name' else None,
+                r'address\s*[:=]\s*([^,\n]+(?:,\s*[^,\n]+)*)' if asked_field == 'address' else None,
+                r'license\s+type\s*[:=]\s*([^,\n]+)' if asked_field == 'license type' else None,
+                r'class\s+([A-Z])' if asked_field == 'license type' else None,
+            ]
+            
+            # Remove None patterns
+            field_patterns = [p for p in field_patterns if p]
+            
+            for pattern in field_patterns:
+                match = re.search(pattern, combined_text, re.IGNORECASE)
+                if match:
+                    value = match.group(1).strip()
+                    # Clean up the value
+                    value = value.split(',')[0].strip() if ',' in value and asked_field != 'address' else value.strip()
+                    
+                    # Format the answer nicely
+                    if asked_field == 'name':
+                        return f"The applicant name is {value}."
+                    elif asked_field == 'address':
+                        return f"The address is {value}."
+                    elif asked_field == 'date of birth':
+                        return f"The date of birth is {value}."
+                    elif asked_field == 'license type':
+                        return f"The license type is {value}."
+                    elif asked_field == 'application date':
+                        return f"The application date is {value}."
+                    else:
+                        return f"The {asked_field} is {value}."
+        
+        # Fallback: Handle "what" questions generically
         if question_lower.startswith('what'):
             # Extract what's being asked about
             asked_about = question_lower.replace('what is', '').replace('what', '').replace('the', '').replace('?', '').strip()
