@@ -77,12 +77,19 @@ except Exception as e:
 # Register routes
 if rag_engine:
     try:
+        logger.info("Registering API routes...")
         from routes.routes import RAGAPIRouter
         router = RAGAPIRouter(app, rag_engine)
-        logger.info("✓ API routes registered")
+        logger.info("✓ API routes registered successfully")
+    except ImportError as e:
+        logger.error(f"Import error while registering routes: {e}")
+        logger.warning("Some dependencies may be missing")
+        logger.info("Routes will work with limited functionality")
     except Exception as e:
         logger.error(f"Failed to register routes: {e}")
         logger.warning("API will only have basic endpoints")
+        import traceback
+        logger.debug(traceback.format_exc())
 else:
     logger.warning("RAG engine not available - registering minimal endpoints only")
 

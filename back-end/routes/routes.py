@@ -13,7 +13,14 @@ import os
 import time
 from PIL import Image
 
-from storage.firebase_client import get_db, get_bucket
+# Optional Firebase import
+try:
+    from storage.firebase_client import get_db, get_bucket
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    logger.warning("Firebase not available - some features will be limited")
+
 from document.ocr_processor import extract_text_from_image
 from document.document_classifier import DocumentClassifier
 from document.field_extractor import FieldExtractor
@@ -149,9 +156,20 @@ class RAGAPIRouter:
             Returns:
                 Status and number of chunks extracted
             """
-            db = get_db()
             doc_id = str(uuid.uuid4())
-            doc_ref = db.collection("documents").document(doc_id)
+            
+            # Use Firebase if available, otherwise work in-memory
+            if FIREBASE_AVAILABLE:
+                try:
+                    db = get_db()
+                    doc_ref = db.collection("documents").document(doc_id)
+                except:
+                    logger.warning("Firebase connection failed, continuing without it")
+                    db = None
+                    doc_ref = None
+            else:
+                db = None
+                doc_ref = None
 
             try:
                 # Import here to avoid circular imports
@@ -161,21 +179,27 @@ class RAGAPIRouter:
                 content = await file.read()
                 ext = os.path.splitext(file.filename)[1].lower()
 
-                # Create the Firestore record before any processing, so a
-                # document shows up as "in progress" even if it fails midway
-                doc_ref.set({
-                    "filename": file.filename,
-                    "status": "UPLOADED",
-                    "upload_time": datetime.datetime.utcnow(),
-                    "document_id": doc_id,
-                })
+                # Create the Firestore record if Firebase available
+                if doc_ref:
+                    try:
+                        doc_ref.set({
+                            "filename": file.filename,
+                            "status": "UPLOADED",
+                            "upload_time": datetime.datetime.utcnow(),
+                            "document_id": doc_id,
+                        })
+                    except:
+                        logger.warning("Could not write to Firebase, continuing")
 
-                # Store the original file in Firebase Storage — keeps the raw
-                # file recoverable/auditable, separate from extracted chunks
-                bucket = get_bucket()
-                blob = bucket.blob(f"originals/{doc_id}{ext}")
-                blob.upload_from_string(content)
-                doc_ref.update({"storage_path": blob.name, "status": "PROCESSING"})
+                # Store in Firebase Storage if available
+                if FIREBASE_AVAILABLE and doc_ref:
+                    try:
+                        bucket = get_bucket()
+                        blob = bucket.blob(f"originals/{doc_id}{ext}")
+                        blob.upload_from_string(content)
+                        doc_ref.update({"storage_path": blob.name, "status": "PROCESSING"})
+                    except:
+                        logger.warning("Could not store in Firebase Storage, continuing")
 
                 # Create temporary file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
@@ -185,12 +209,20 @@ class RAGAPIRouter:
                 try:
                     # --- P1: OCR branch for images, existing processor for the rest ---
                     if ext in (".jpg", ".jpeg", ".png"):
-                        doc_ref.update({"status": "OCR"})
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "OCR"})
+                            except:
+                                pass
                         image = Image.open(temp_path)
                         text, ocr_confidence = extract_text_from_image(image)
 
                         if not text.strip():
-                            doc_ref.update({"status": "FAILED", "error": "No text extracted via OCR"})
+                            if doc_ref:
+                                try:
+                                    doc_ref.update({"status": "FAILED", "error": "No text extracted via OCR"})
+                                except:
+                                    pass
                             return {
                                 "status": "warning",
                                 "message": "No text extracted from image"
@@ -202,9 +234,17 @@ class RAGAPIRouter:
                             "source": file.filename,
                             "ocr_confidence": ocr_confidence,
                         }]
-                        doc_ref.update({"ocr_confidence": ocr_confidence})
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"ocr_confidence": ocr_confidence})
+                            except:
+                                pass
                     else:
-                        doc_ref.update({"status": "EXTRACTING"})
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "EXTRACTING"})
+                            except:
+                                pass
                         processor = DocumentProcessor(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
                         chunks, chunk_metadata = processor.process_file(
                             temp_path,
@@ -212,7 +252,11 @@ class RAGAPIRouter:
                         )
 
                     if not chunks:
-                        doc_ref.update({"status": "FAILED", "error": "No text extracted from document"})
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "FAILED", "error": "No text extracted from document"})
+                            except:
+                                pass
                         return {
                             "status": "warning",
                             "message": "No text extracted from document"
@@ -221,53 +265,80 @@ class RAGAPIRouter:
                     full_text = " ".join(chunks)
 
                     # --- P2: classification ---
-                    doc_ref.update({"status": "CLASSIFYING"})
+                    if doc_ref:
+                        try:
+                            doc_ref.update({"status": "CLASSIFYING"})
+                        except:
+                            pass
                     doc_type, classification_confidence = self.classifier.classify(full_text)
-                    doc_ref.update({
-                        "document_type": doc_type,
-                        "classification_confidence": classification_confidence,
-                    })
+                    if doc_ref:
+                        try:
+                            doc_ref.update({
+                                "document_type": doc_type,
+                                "classification_confidence": classification_confidence,
+                            })
+                        except:
+                            pass
 
                     # --- P3: structured field extraction ---
-                    doc_ref.update({"status": "EXTRACTING_FIELDS"})
-                    # was: extracted_fields = self.extractor.extract(full_text, doc_type)
+                    if doc_ref:
+                        try:
+                            doc_ref.update({"status": "EXTRACTING_FIELDS"})
+                        except:
+                            pass
                     extracted_fields = self.extractor.extract(chunks, chunk_metadata, doc_type, file.filename)
-                    doc_ref.update({"extracted_fields": extracted_fields})
+                    if doc_ref:
+                        try:
+                            doc_ref.update({"extracted_fields": extracted_fields})
+                        except:
+                            pass
 
-                    # Stamp every chunk with real identifiers instead of the
-                    # placeholder "API upload" string — this is what makes
-                    # RAG citations and future cross-doc comparisons point
-                    # back to the actual document instead of a generic label.
+                    # Stamp every chunk with real identifiers
                     for m in chunk_metadata:
                         m["document_id"] = doc_id
                         m["document_type"] = doc_type
                         m["source"] = file.filename
 
                     # Add chunks to RAG engine
-                    doc_ref.update({"status": "INDEXING"})
+                    if doc_ref:
+                        try:
+                            doc_ref.update({"status": "INDEXING"})
+                        except:
+                            pass
                     doc_ids = self.rag_engine.add_documents(chunks, chunk_metadata)
 
-                    doc_ref.update({
-                        "status": "COMPLETED",
-                        "chunk_count": len(chunks),
-                        "chunk_ids": doc_ids,
-                    })
+                    if doc_ref:
+                        try:
+                            doc_ref.update({
+                                "status": "COMPLETED",
+                                "chunk_count": len(chunks),
+                                "chunk_ids": doc_ids,
+                            })
+                        except:
+                            pass
 
                     return {
                         "status": "success",
                         "message": f"Processed document into {len(chunks)} chunks",
                         "document_id": doc_id,
                         "document_type": doc_type,
+                        "classification_confidence": float(classification_confidence),
                         "extracted_fields": extracted_fields,
+                        "chunk_count": len(chunks),
                         "document_ids": doc_ids,
-                        "processing_time_seconds": round(time.time() - start_time, 2)
+                        "processing_time_seconds": round(time.time() - start_time, 2),
+                        "firebase_enabled": FIREBASE_AVAILABLE
                     }
                 finally:
                     # Clean up temporary file
                     os.unlink(temp_path)
             except Exception as e:
                 logger.error(f"Error processing document: {e}")
-                doc_ref.update({"status": "FAILED", "error": str(e)})
+                if doc_ref:
+                    try:
+                        doc_ref.update({"status": "FAILED", "error": str(e)})
+                    except:
+                        pass
                 raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
 
         @self.app.get("/documents/{document_id}/status", summary="Get document processing status")
@@ -280,11 +351,22 @@ class RAGAPIRouter:
             Returns:
                 The document's current Firestore record
             """
-            db = get_db()
-            doc = db.collection("documents").document(document_id).get()
-            if not doc.exists:
-                raise HTTPException(status_code=404, detail="Document not found")
-            return doc.to_dict()
+            if not FIREBASE_AVAILABLE:
+                return {
+                    "status": "error",
+                    "message": "Firebase not available - status tracking disabled",
+                    "document_id": document_id
+                }
+            
+            try:
+                db = get_db()
+                doc = db.collection("documents").document(document_id).get()
+                if not doc.exists:
+                    raise HTTPException(status_code=404, detail="Document not found")
+                return doc.to_dict()
+            except Exception as e:
+                logger.error(f"Error fetching document status: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to fetch status: {str(e)}")
 
         @self.app.post("/query", response_model=RAGResponse, summary="Query the RAG system")
         async def query(query_input: QueryInput):
