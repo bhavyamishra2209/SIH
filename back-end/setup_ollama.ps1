@@ -97,7 +97,7 @@ Write-Host "  cd back-end" -ForegroundColor Green
 Write-Host "  python main.py" -ForegroundColor Green
 Write-Host ""
 Write-Host "You should see:" -ForegroundColor White
-Write-Host '  "✓ Using Ollama LLM (Local, FREE, No Internet Needed)"' -ForegroundColor Gray
+Write-Host "  Using Ollama LLM (Local, FREE, No Internet Needed)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Test at: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host ""
