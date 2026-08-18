@@ -406,7 +406,7 @@ class RAGAPIRouter:
                             id=doc["id"],
                             text=doc["text"],
                             metadata=doc["metadata"],
-                            score=doc["score"]
+                            score=float(doc["score"])  # Convert numpy.float32 to Python float
                         )
                         for doc in result["retrieved_documents"]
                     ],
@@ -416,7 +416,7 @@ class RAGAPIRouter:
                             "source_document": doc["metadata"].get("source", "Unknown"),
                             "page": doc["metadata"].get("page", "unknown"),
                             "evidence_snippet": doc["text"][:200],
-                            "confidence": round(doc["score"], 3),
+                            "confidence": round(float(doc["score"]), 3),  # Convert numpy.float32 to Python float
                         }
                         for doc in result["retrieved_documents"]
                     ]
