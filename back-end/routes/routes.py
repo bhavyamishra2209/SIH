@@ -13,10 +13,14 @@ import os
 import time
 from PIL import Image
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 # Optional Firebase import
 try:
     from storage.firebase_client import get_db, get_bucket
     FIREBASE_AVAILABLE = True
+    logger.info("Firebase client available")
 except ImportError:
     FIREBASE_AVAILABLE = False
     logger.warning("Firebase not available - some features will be limited")
@@ -24,9 +28,6 @@ except ImportError:
 from document.ocr_processor import extract_text_from_image
 from document.document_classifier import DocumentClassifier
 from document.field_extractor import FieldExtractor
-
-# Configure logging
-logger = logging.getLogger(__name__)
 
 
 # Define Pydantic models for API requests and responses
