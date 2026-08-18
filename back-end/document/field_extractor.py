@@ -89,85 +89,20 @@ class FieldExtractor:
         # Prepare text for extraction (limit to avoid token limits)
         full_text = " ".join(chunks)[:4000]
         
-        # Build extraction prompt
-        field_descriptions = []
+        # Use regex-based extraction instead of LLM for better reliability
+        extracted_fields = []
+        
         for field in fields:
-            if isinstance(field, dict):
-                name = field.get("name", "")
-                desc = field.get("description", "")
-                field_type = field.get("type", "string")
-                required = field.get("required", False)
-                field_descriptions.append(
-                    f"- {name} ({field_type}{'*' if required else ''}): {desc}"
-                )
-            else:
-                # Legacy simple field list
-                field_descriptions.append(f"- {field}")
-        
-        field_list_str = "\n".join(field_descriptions)
-        
-        instructions = f"""Extract the following fields from the document text.
-
-Document text:
-{full_text}
-
-Fields to extract:
-{field_list_str}
-
-For each field, find the value in the text above. Look for patterns like "Field Name: Value".
-
-Return ONLY valid JSON in this exact format (no markdown, no extra text):
-{{
-  "field_name": {{"value": "extracted_value", "confidence": 0.95}},
-  "another_field": {{"value": "another_value", "confidence": 0.85}}
-}}
-
-Examples:
-- If text contains "Name: John Smith", extract {{"applicant_name": {{"value": "John Smith", "confidence": 0.95}}}}
-- If text contains "Date: 15/03/1995", extract {{"date_filed": {{"value": "15/03/1995", "confidence": 0.95}}}}
-- If a field is not found, use {{"field_name": {{"value": null, "confidence": 0.0}}}}
-
-Rules:
-- Extract exactly what appears in the document
-- Confidence should be 0.9-1.0 if clearly found, 0.0 if not found
-- Do not invent or guess values
-- For dates, keep the format as shown in the document
-- For addresses, include the full address as shown"""
-
-        prompt = f"{instructions}"
-        
-        # Generate extraction using LLM
-        try:
-            # Use the LLM directly to generate response
-            if hasattr(self.rag_engine, 'llm') and self.rag_engine.llm:
-                raw_response = self.rag_engine.llm.generate_response(prompt, max_tokens=512)
-            else:
-                logger.error("No LLM available in RAG engine")
-                raw_response = "{}"
+            field_name = self._get_field_name(field)
+            field_info = self._get_field_info(fields, field_name)
             
-            logger.info(f"LLM extraction response: {raw_response[:200]}...")
-            parsed_fields = self._parse_llm_response(raw_response, fields)
-        except Exception as e:
-            logger.error(f"LLM extraction failed: {e}", exc_info=True)
-            parsed_fields = [
-                {"field": self._get_field_name(f), "value": None, "confidence": 0.0}
-                for f in fields
-            ]
-        
-        # P4: Attach evidence to every extracted field
-        extracted_with_evidence = []
-        for field_data in parsed_fields:
-            field_name = field_data["field"]
-            value = field_data["value"]
-            confidence = field_data["confidence"]
+            # Try to extract value using pattern matching
+            value, confidence = self._extract_field_value(field_name, full_text)
             
             # Find evidence for this field
             evidence = self.evidence_tracker.find_evidence(
                 value, chunks, chunk_metadata, filename
             )
-            
-            # Get field metadata from schema
-            field_info = self._get_field_info(fields, field_name)
             
             # Create extracted field with evidence
             extracted_field = create_extracted_field(
@@ -179,10 +114,76 @@ Rules:
                 required=field_info.get("required")
             )
             
-            extracted_with_evidence.append(extracted_field.to_dict())
+            extracted_fields.append(extracted_field.to_dict())
         
-        logger.info(f"Extracted {len(extracted_with_evidence)} fields from {document_type}")
-        return extracted_with_evidence
+        logger.info(f"Extracted {len(extracted_fields)} fields from {document_type}")
+        return extracted_fields
+    
+    def _extract_field_value(self, field_name: str, text: str) -> tuple:
+        """
+        Extract field value using pattern matching.
+        
+        Args:
+            field_name: Name of field to extract
+            text: Document text
+            
+        Returns:
+            Tuple of (value, confidence)
+        """
+        # Define field patterns - map field names to search patterns
+        field_patterns = {
+            'applicant_name': [
+                r'name\s*[:=]\s*([^\n]+?)(?:\s+date|$)',
+                r'applicant\s+name\s*[:=]\s*([^\n]+?)(?:\s+date|$)',
+            ],
+            'application_number': [
+                r'application\s+(?:no|number|#)\s*[:=]?\s*([A-Z0-9\-]+)',
+                r'reference\s+(?:no|number)\s*[:=]?\s*([A-Z0-9\-]+)',
+            ],
+            'date_filed': [
+                r'application\s+date\s*[:=]\s*([0-9/\-]+)',
+                r'date\s+filed\s*[:=]\s*([0-9/\-]+)',
+                r'filed\s+on\s*[:=]?\s*([0-9/\-]+)',
+            ],
+            'purpose': [
+                r'purpose\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',
+                r'reason\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',
+            ],
+            'applicant_address': [
+                r'address\s*[:=]\s*([^\n]+?)(?:\s+license|$)',
+                r'residential\s+address\s*[:=]\s*([^\n]+?)(?:\s+license|$)',
+            ],
+            'contact_number': [
+                r'phone\s*[:=]?\s*([0-9\-\(\)\s]+)',
+                r'contact\s+number\s*[:=]?\s*([0-9\-\(\)\s]+)',
+                r'mobile\s*[:=]?\s*([0-9\-\(\)\s]+)',
+            ],
+            'email': [
+                r'email\s*[:=]?\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})',
+            ],
+            'department': [
+                r'department\s*[:=]\s*([^\n]+?)(?:\s+[A-Z]|$)',
+            ],
+        }
+        
+        # Try patterns for this field
+        patterns = field_patterns.get(field_name, [])
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                value = match.group(1).strip()
+                # Clean up value
+                value = re.sub(r'\s+', ' ', value)  # Normalize spaces
+                value = value.rstrip(',.')  # Remove trailing punctuation
+                
+                if value:
+                    logger.info(f"Extracted {field_name}: {value}")
+                    return value, 0.9
+        
+        # Not found
+        logger.debug(f"Field {field_name} not found in text")
+        return None, 0.0
     
     @staticmethod
     def _get_field_name(field: Any) -> str:
