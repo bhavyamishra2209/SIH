@@ -1,0 +1,15 @@
+# Secrets
+.env
+*firebase*adminsdk*.json
+*serviceAccountKey*.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS/editor junk
+.DS_Store
+.vscode/
+.streamlit/secrets.toml
