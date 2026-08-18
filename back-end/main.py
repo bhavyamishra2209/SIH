@@ -4,8 +4,18 @@ Run with: uvicorn main:app --reload
 """
 
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+    logger = logging.getLogger(__name__)
+    logger.info(f"✓ Loaded environment variables from {env_path}")
 
 # Configure logging
 logging.basicConfig(
