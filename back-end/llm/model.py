@@ -218,30 +218,52 @@ class LocalLLM(BaseLLM):
     
     def _generate_answer(self, chunks: List[str], question: str) -> str:
         """Generate an answer to a question from document chunks."""
-        # Try to find a chunk that might contain the answer
-        best_chunk = None
-        best_score = 0
+        # Combine all chunks for a more comprehensive search
+        combined_text = ' '.join(chunks)
         
-        # Create list of important words from the question
-        question_words = [w.lower() for w in question.split() if len(w) > 3]
+        # Extract key terms from the question (remove common words)
+        stop_words = {'what', 'is', 'the', 'a', 'an', 'are', 'how', 'where', 'when', 'who', 'why', 'which', 'do', 'does'}
+        question_words = [w.lower() for w in question.split() if w.lower() not in stop_words and len(w) > 2]
         
+        # Try to find relevant information in the combined text
+        combined_lower = combined_text.lower()
+        
+        # Check if any question words appear in the text
+        relevant_sentences = []
         for chunk in chunks:
-            chunk_lower = chunk.lower()
-            # Count how many question words appear in this chunk
-            score = sum(1 for word in question_words if word in chunk_lower)
-            if score > best_score:
-                best_score = score
-                best_chunk = chunk
+            sentences = chunk.split('.')
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                # If the sentence contains any question word, it's likely relevant
+                if any(word in sentence_lower for word in question_words):
+                    relevant_sentences.append(sentence.strip())
         
-        if best_chunk and best_score > 0:
-            # Use the best matching chunk for the answer
-            sentences = best_chunk.split('.')
-            # Get the first few sentences
-            relevant_text = '. '.join(sentences[:min(4, len(sentences))]) + '.'
+        # If we found relevant sentences, return them
+        if relevant_sentences:
+            # Return the most relevant sentences (up to 3)
+            answer_text = '. '.join(relevant_sentences[:3])
+            if not answer_text.endswith('.'):
+                answer_text += '.'
+            return f"Based on the documents, {answer_text}"
+        
+        # Fallback: check if the whole chunk seems relevant
+        for chunk in chunks:
+            # Count how many question words appear in this chunk
+            chunk_lower = chunk.lower()
+            score = sum(1 for word in question_words if word in chunk_lower)
             
-            return f"Based on the documents, {relevant_text}"
-        else:
-            return "I don't have enough information to answer that specific question."
+            if score > 0 or len(question_words) == 0:
+                # This chunk seems relevant, return it
+                sentences = chunk.split('.')
+                # Get the first few sentences
+                relevant_text = '. '.join(s.strip() for s in sentences[:min(3, len(sentences))] if s.strip())
+                if relevant_text and not relevant_text.endswith('.'):
+                    relevant_text += '.'
+                    
+                if relevant_text:
+                    return f"Based on the documents, {relevant_text}"
+        
+        return "I don't have enough information to answer that specific question."
     
     def generate_huggingface_response(self, prompt: str, max_tokens: int = 512) -> str:
         """Alias for generate_response for compatibility."""
