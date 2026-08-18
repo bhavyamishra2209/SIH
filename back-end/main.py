@@ -47,21 +47,35 @@ try:
     vector_db = FaissVectorDatabase(dimension=embedder.dimension)
     logger.info("✓ Vector database created")
     
-    logger.info("Step 3: Creating LLM (HuggingFace)...")
-    from llm.serverless_model import HuggingFaceInferenceAPI
+    logger.info("Step 3: Creating LLM...")
     import os
     
-    # Get HuggingFace API key from environment
-    hf_token = os.getenv("HUGGINGFACE_API_KEY")
-    if not hf_token:
-        logger.warning("⚠️  HUGGINGFACE_API_KEY not set! Using free tier (may be slow/limited)")
-        logger.warning("Get your free token from: https://huggingface.co/settings/tokens")
-    
-    llm = HuggingFaceInferenceAPI(
-        model_name="mistralai/Mistral-7B-Instruct-v0.2",  # Fast, accurate model
-        api_key=hf_token
-    )
-    logger.info("✓ HuggingFace LLM created (FREE tier)")
+    # Try Ollama first (local, no internet needed)
+    try:
+        from llm.ollama_model import OllamaLLM
+        llm = OllamaLLM(model="llama2")
+        if llm.available:
+            logger.info("✓ Using Ollama LLM (Local, FREE, No Internet Needed)")
+        else:
+            raise Exception("Ollama not available")
+    except Exception as e:
+        # Fallback to HuggingFace
+        logger.warning(f"Ollama not available: {e}")
+        logger.info("Falling back to HuggingFace API...")
+        
+        from llm.serverless_model import HuggingFaceInferenceAPI
+        hf_token = os.getenv("HUGGINGFACE_API_KEY")
+        
+        if not hf_token:
+            logger.warning("⚠️  HUGGINGFACE_API_KEY not set!")
+            logger.warning("Get free token: https://huggingface.co/settings/tokens")
+            logger.info("OR install Ollama (local, no internet): https://ollama.ai")
+        
+        llm = HuggingFaceInferenceAPI(
+            model_name="mistralai/Mistral-7B-Instruct-v0.2",
+            api_key=hf_token
+        )
+        logger.info("✓ Using HuggingFace LLM (Requires Internet)")
     
     logger.info("Step 4: Creating RAG engine...")
     from rag.engine import RAGEngine
