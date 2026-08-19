@@ -397,9 +397,9 @@ MIT License - See LICENSE file for details
 
 ## 🎉 Acknowledgments
 
-- Original RAG system base: navid72m/pdf
 - SIH 2024 Organizing Committee
 - Mentors and Advisors
+- Open source community for various libraries and tools
 
 ---
 
