@@ -1,5 +1,6 @@
 # Secrets
 .env
+firebase-credentials.json
 *firebase*adminsdk*.json
 *serviceAccountKey*.json
 

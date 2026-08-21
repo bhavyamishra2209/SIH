@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Optional Firebase import
 try:
-    from storage.firebase_client import get_db
+    from storage.firebase_client import get_db, get_bucket
     FIREBASE_AVAILABLE = True
     logger.info("Firebase client available")
 except ImportError:
@@ -192,7 +192,16 @@ class RAGAPIRouter:
                     except:
                         logger.warning("Could not write to Firebase, continuing")
 
-                
+                # Store in Firebase Storage if available
+                if FIREBASE_AVAILABLE and doc_ref:
+                    try:
+                        bucket = get_bucket()
+                        blob = bucket.blob(f"originals/{doc_id}{ext}")
+                        blob.upload_from_string(content)
+                        doc_ref.update({"storage_path": blob.name, "status": "PROCESSING"})
+                    except:
+                        logger.warning("Could not store in Firebase Storage, continuing")
+
                 # Create temporary file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
                     temp_file.write(content)
