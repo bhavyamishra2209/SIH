@@ -68,9 +68,46 @@ class TesseractOCR(OCREngine):
                 "pytesseract not installed. Install with: pip install pytesseract"
             )
     
+    def _preprocess_image(self, image: Image.Image) -> Image.Image:
+        """
+        Preprocess image for better OCR results.
+        
+        Args:
+            image: Original PIL Image
+            
+        Returns:
+            Preprocessed PIL Image
+        """
+        try:
+            from PIL import ImageEnhance, ImageFilter
+            
+            # Convert to grayscale if not already
+            if image.mode != 'L':
+                image = image.convert('L')
+            
+            # Increase contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(2.0)
+            
+            # Sharpen the image
+            image = image.filter(ImageFilter.SHARPEN)
+            
+            # Remove noise
+            image = image.filter(ImageFilter.MedianFilter(size=3))
+            
+            logger.debug("Image preprocessing completed")
+            return image
+            
+        except Exception as e:
+            logger.warning(f"Image preprocessing failed: {e}, using original")
+            return image
+    
     def extract_text(self, image: Image.Image) -> Tuple[str, float]:
         """Extract text with average confidence."""
         try:
+            # Preprocess image for better OCR
+            image = self._preprocess_image(image)
+            
             # Get detailed data with confidence scores
             data = self.pytesseract.image_to_data(
                 image, 
@@ -159,9 +196,31 @@ class EasyOCREngine(OCREngine):
                 "easyocr not installed. Install with: pip install easyocr"
             )
     
+    def _preprocess_image(self, image: Image.Image) -> Image.Image:
+        """Preprocess image for better OCR results."""
+        try:
+            from PIL import ImageEnhance, ImageFilter
+            
+            if image.mode != 'L':
+                image = image.convert('L')
+            
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(2.0)
+            
+            image = image.filter(ImageFilter.SHARPEN)
+            image = image.filter(ImageFilter.MedianFilter(size=3))
+            
+            return image
+        except Exception as e:
+            logger.warning(f"Image preprocessing failed: {e}")
+            return image
+    
     def extract_text(self, image: Image.Image) -> Tuple[str, float]:
         """Extract text with average confidence."""
         try:
+            # Preprocess image
+            image = self._preprocess_image(image)
+            
             # Convert PIL Image to numpy array
             image_np = np.array(image)
             

@@ -121,7 +121,7 @@ class FieldExtractor:
     
     def _extract_field_value(self, field_name: str, text: str) -> tuple:
         """
-        Extract field value using pattern matching.
+        Extract field value using improved pattern matching.
         
         Args:
             field_name: Name of field to extract
@@ -130,39 +130,65 @@ class FieldExtractor:
         Returns:
             Tuple of (value, confidence)
         """
-        # Define field patterns - map field names to search patterns
+        # Define improved field patterns - more flexible to handle OCR errors
         field_patterns = {
             'applicant_name': [
-                r'name\s*[:=]\s*([^\n]+?)(?:\s+date|$)',
-                r'applicant\s+name\s*[:=]\s*([^\n]+?)(?:\s+date|$)',
+                # Standard formats with optional colon/equals
+                r'(?:applicant\s+)?name\s*[:=]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+                # Name followed by date or other fields
+                r'name\s*[:=]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+(?:date|dob|birth)',
+                # Name patterns without label (2-4 capitalized words)
+                r'\b([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+has\s+applied',
+                # With titles
+                r'(?:Mr|Ms|Mrs|Dr)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
             ],
             'application_number': [
-                r'application\s+(?:no|number|#)\s*[:=]?\s*([A-Z0-9\-]+)',
-                r'reference\s+(?:no|number)\s*[:=]?\s*([A-Z0-9\-]+)',
+                r'application\s+(?:no|number|#|num)\s*[:=]?\s*([A-Z0-9\-/]+)',
+                r'reference\s+(?:no|number)\s*[:=]?\s*([A-Z0-9\-/]+)',
+                r'app\s*(?:no|#)\s*[:=]?\s*([A-Z0-9\-/]+)',
+                # Just alphanumeric pattern if no label
+                r'\b([A-Z]{2,}\d{4,})\b',  # e.g., APP2024001
             ],
             'date_filed': [
-                r'application\s+date\s*[:=]\s*([0-9/\-]+)',
-                r'date\s+filed\s*[:=]\s*([0-9/\-]+)',
-                r'filed\s+on\s*[:=]?\s*([0-9/\-]+)',
+                # With various labels
+                r'(?:application|filed|submission)\s+date\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+                r'date\s+(?:filed|submitted)\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+                r'filed\s+on\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+                # Just date patterns
+                r'\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\b',
+            ],
+            'date_of_birth': [
+                r'date\s+of\s+birth\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+                r'dob\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
+                r'born\s+on\s*[:=]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})',
             ],
             'purpose': [
-                r'purpose\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',
-                r'reason\s*[:=]\s*([^\n]+?)(?:\s+[A-Z][a-z]+:|$)',
+                r'purpose\s*[:=]?\s*([^\n]+?)(?:\s+[A-Z][a-z]+\s*[:=]|$)',
+                r'reason\s*[:=]?\s*([^\n]+?)(?:\s+[A-Z][a-z]+\s*[:=]|$)',
+                r'for\s+the\s+purpose\s+of\s+([^\n]+?)(?:\s+[A-Z]|$)',
             ],
             'applicant_address': [
-                r'address\s*[:=]\s*([^\n]+?)(?:\s+license|$)',
-                r'residential\s+address\s*[:=]\s*([^\n]+?)(?:\s+license|$)',
+                # With label
+                r'(?:applicant\s+)?address\s*[:=]?\s*([^\n]+?)(?:\s+(?:license|contact|phone)|$)',
+                r'residential\s+address\s*[:=]?\s*([^\n]+?)(?:\s+(?:license|contact)|$)',
+                # Address patterns (number + street name + optional city)
+                r'(\d+\s+[A-Za-z\s]+(?:street|st|avenue|ave|road|rd|lane|drive|dr)[\w\s,]+)',
             ],
             'contact_number': [
-                r'phone\s*[:=]?\s*([0-9\-\(\)\s]+)',
-                r'contact\s+number\s*[:=]?\s*([0-9\-\(\)\s]+)',
-                r'mobile\s*[:=]?\s*([0-9\-\(\)\s]+)',
+                r'(?:phone|contact|mobile|tel)\s*(?:no|number)?\s*[:=]?\s*([\+]?[\d\-\(\)\s]{10,})',
+                r'\b(\+?\d{1,3}[-\.\s]?\(?\d{3}\)?[-\.\s]?\d{3}[-\.\s]?\d{4})\b',  # International format
             ],
             'email': [
                 r'email\s*[:=]?\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})',
+                r'\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b',  # Without label
             ],
             'department': [
-                r'department\s*[:=]\s*([^\n]+?)(?:\s+[A-Z]|$)',
+                r'department\s*[:=]?\s*([^\n]+?)(?:\s+[A-Z]|$)',
+                r'dept\s*[:=]?\s*([^\n]+?)(?:\s+[A-Z]|$)',
+            ],
+            'document_title': [
+                r'^([A-Z\s]{3,}(?:FORM|APPLICATION|CERTIFICATE|LICENSE|PERMIT))$',  # All caps titles
+                r'(?:^|\n)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){2,})\n',  # Title Case at start
             ],
         }
         
@@ -170,14 +196,15 @@ class FieldExtractor:
         patterns = field_patterns.get(field_name, [])
         
         for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 value = match.group(1).strip()
                 # Clean up value
                 value = re.sub(r'\s+', ' ', value)  # Normalize spaces
                 value = value.rstrip(',.')  # Remove trailing punctuation
+                value = value.strip()
                 
-                if value:
+                if value and len(value) > 1:  # Avoid single character matches
                     logger.info(f"Extracted {field_name}: {value}")
                     return value, 0.9
         
