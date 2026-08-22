@@ -6,7 +6,7 @@ import logging
 import uuid
 import datetime
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Query, Depends, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel, Field
 import tempfile
 import os
@@ -141,23 +141,18 @@ class RAGAPIRouter:
                 logger.error(f"Error adding documents: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to add documents: {str(e)}")
 
-        @self.app.post("/upload", response_model=List[Dict[str, Any]], summary="Upload and process document files")
+        @self.app.post("/upload", summary="Upload and process document files")
         async def upload_document(
-            files: List[UploadFile],
-            chunk_size: int = Query(1000, ge=100, le=5000, description="Size of text chunks"),
-            chunk_overlap: int = Query(200, ge=0, le=500, description="Overlap between chunks")
-        ):
+            files: List[UploadFile] = File(...),
+            chunk_size: int = Query(1000, ge=100, le=5000),
+            chunk_overlap: int = Query(200, ge=0, le=500)
+        ) -> List[Dict[str, Any]]:
             """
-            Upload and process one or more document files.
+            Upload and process multiple document files at once.
             
-            ISSUE 4 FIX: Supports multiple file uploads simultaneously.
-
-            - **files**: Document files to upload (PDF, TXT, DOCX, JPG, PNG, etc.)
-            - **chunk_size**: Size of text chunks
-            - **chunk_overlap**: Overlap between chunks
-
-            Returns:
-                List of results for each document (status, document_id, extracted fields, etc.)
+            Supports: PDF, TXT, DOCX, JPG, PNG, and more.
+            
+            Select multiple files using the file picker below.
             """
             all_results = []
             
