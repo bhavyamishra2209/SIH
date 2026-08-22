@@ -141,23 +141,33 @@ class RAGAPIRouter:
                 logger.error(f"Error adding documents: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to add documents: {str(e)}")
 
-        # Custom OpenAPI schema override for multi-file upload
-        def custom_openapi():
+        # SWAGGER FIX: Custom OpenAPI schema to force file picker UI
+        def custom_openapi_schema():
+            """Override OpenAPI schema to fix Swagger UI file upload rendering."""
             if self.app.openapi_schema:
                 return self.app.openapi_schema
             
-            openapi_schema = self.app.openapi()
+            # Generate default schema
+            from fastapi.openapi.utils import get_openapi
+            openapi_schema = get_openapi(
+                title=self.app.title,
+                version=self.app.version,
+                description=self.app.description,
+                routes=self.app.routes,
+            )
             
-            # Fix the /upload endpoint schema to show file picker
-            if "/upload" in openapi_schema["paths"]:
-                upload_path = openapi_schema["paths"]["/upload"]["post"]
+            # Fix /upload endpoint to show file picker instead of text input
+            if "/upload" in openapi_schema.get("paths", {}):
+                upload_endpoint = openapi_schema["paths"]["/upload"]["post"]
                 
-                # Override request body to force file upload UI in Swagger
-                upload_path["requestBody"] = {
+                # Override request body schema
+                upload_endpoint["requestBody"] = {
+                    "required": True,
                     "content": {
                         "multipart/form-data": {
                             "schema": {
                                 "type": "object",
+                                "required": ["files"],
                                 "properties": {
                                     "files": {
                                         "type": "array",
@@ -165,7 +175,7 @@ class RAGAPIRouter:
                                             "type": "string",
                                             "format": "binary"
                                         },
-                                        "description": "Multiple document files (PDF, DOCX, PNG, JPG, TXT)"
+                                        "description": "Select multiple files (PDF, DOCX, PNG, JPG, TXT)"
                                     },
                                     "chunk_size": {
                                         "type": "integer",
@@ -179,18 +189,17 @@ class RAGAPIRouter:
                                         "minimum": 0,
                                         "maximum": 500
                                     }
-                                },
-                                "required": ["files"]
+                                }
                             }
                         }
-                    },
-                    "required": True
+                    }
                 }
             
             self.app.openapi_schema = openapi_schema
             return openapi_schema
         
-        self.app.openapi = custom_openapi
+        # Apply custom schema
+        self.app.openapi = custom_openapi_schema
 
         @self.app.post("/upload", summary="Upload and process document files")
         async def upload_document(
