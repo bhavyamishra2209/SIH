@@ -141,6 +141,57 @@ class RAGAPIRouter:
                 logger.error(f"Error adding documents: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to add documents: {str(e)}")
 
+        # Custom OpenAPI schema override for multi-file upload
+        def custom_openapi():
+            if self.app.openapi_schema:
+                return self.app.openapi_schema
+            
+            openapi_schema = self.app.openapi()
+            
+            # Fix the /upload endpoint schema to show file picker
+            if "/upload" in openapi_schema["paths"]:
+                upload_path = openapi_schema["paths"]["/upload"]["post"]
+                
+                # Override request body to force file upload UI in Swagger
+                upload_path["requestBody"] = {
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "files": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "binary"
+                                        },
+                                        "description": "Multiple document files (PDF, DOCX, PNG, JPG, TXT)"
+                                    },
+                                    "chunk_size": {
+                                        "type": "integer",
+                                        "default": 1000,
+                                        "minimum": 100,
+                                        "maximum": 5000
+                                    },
+                                    "chunk_overlap": {
+                                        "type": "integer",
+                                        "default": 200,
+                                        "minimum": 0,
+                                        "maximum": 500
+                                    }
+                                },
+                                "required": ["files"]
+                            }
+                        }
+                    },
+                    "required": True
+                }
+            
+            self.app.openapi_schema = openapi_schema
+            return openapi_schema
+        
+        self.app.openapi = custom_openapi
+
         @self.app.post("/upload", summary="Upload and process document files")
         async def upload_document(
             files: List[UploadFile] = File(...),
