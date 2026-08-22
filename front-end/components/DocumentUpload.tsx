@@ -19,14 +19,17 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return
 
-    const file = acceptedFiles[0]
     setUploading(true)
     setError(null)
     setResult(null)
 
     try {
       const formData = new FormData()
-      formData.append('file', file)
+      
+      // ISSUE 4 FIX: Append all files (backend now accepts multiple)
+      acceptedFiles.forEach((file) => {
+        formData.append('files', file)
+      })
 
       const response = await axios.post(`${API_URL}/upload`, formData, {
         headers: {
@@ -34,10 +37,19 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
         },
       })
 
+      // Backend now returns array of results
       setResult(response.data)
-      onDocumentUploaded(response.data)
+      
+      // Add all documents to parent state
+      if (Array.isArray(response.data)) {
+        response.data.forEach((doc: any) => {
+          if (doc.status === 'success') {
+            onDocumentUploaded(doc)
+          }
+        })
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to upload document')
+      setError(err.response?.data?.detail || 'Failed to upload documents')
     } finally {
       setUploading(false)
     }
@@ -51,7 +63,7 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
       'text/plain': ['.txt'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
     },
-    maxFiles: 1,
+    multiple: true,  // ISSUE 4 FIX: Allow multiple files
   })
 
   return (
@@ -85,7 +97,7 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
                 </p>
               </div>
               <p className="text-xs text-gray-500">
-                Supports: PDF, Images (PNG, JPG), DOCX, TXT
+                Supports: PDF, Images (PNG, JPG), DOCX, TXT • Drop multiple files at once!
               </p>
             </>
           )}
@@ -107,7 +119,117 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
 
       {/* Success Result */}
       {result && (
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        <div className="space-y-4">
+          {Array.isArray(result) ? (
+            // Multiple documents
+            result.map((doc: any, index: number) => (
+              <div key={index} className="bg-white rounded-lg shadow-md overflow-hidden">
+                {/* Header */}
+                <div className={`${doc.status === 'success' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} border-b px-6 py-4`}>
+                  <div className="flex items-center space-x-3">
+                    {doc.status === 'success' ? (
+                      <CheckCircle className="w-6 h-6 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-red-600" />
+                    )}
+                    <div>
+                      <h3 className={`text-lg font-semibold ${doc.status === 'success' ? 'text-green-900' : 'text-red-900'}`}>
+                        {doc.filename || `Document ${index + 1}`}
+                      </h3>
+                      <p className={`text-sm mt-1 ${doc.status === 'success' ? 'text-green-700' : 'text-red-700'}`}>
+                        {doc.message}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Details (only for successful uploads) */}
+                {doc.status === 'success' && (
+                  <div className="p-6 space-y-6">
+                    {/* Classification */}
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-900 mb-3">Classification</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <p className="text-xs text-gray-600 mb-1">Document Type</p>
+                          <p className="text-lg font-semibold text-gray-900">
+                            {doc.document_type}
+                          </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <p className="text-xs text-gray-600 mb-1">Confidence</p>
+                          <p className="text-lg font-semibold text-gray-900">
+                            {(doc.classification_confidence * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Extracted Fields */}
+                    {doc.extracted_fields && doc.extracted_fields.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Extracted Fields</h4>
+                        <div className="space-y-2">
+                          {doc.extracted_fields.map((field: any, fieldIndex: number) => (
+                            field.value && (
+                              <div key={fieldIndex} className="bg-gray-50 rounded-lg p-4">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <p className="text-xs font-medium text-gray-600">
+                                      {field.field.replace(/_/g, ' ').toUpperCase()}
+                                    </p>
+                                    <p className="text-sm text-gray-900 mt-1">
+                                      {field.value}
+                                    </p>
+                                  </div>
+                                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                    field.confidence > 0.7
+                                      ? 'bg-green-100 text-green-800'
+                                      : field.confidence > 0.4
+                                      ? 'bg-yellow-100 text-yellow-800'
+                                      : 'bg-red-100 text-red-800'
+                                  }`}>
+                                    {(field.confidence * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Metadata */}
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-900 mb-3">Processing Info</h4>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <p className="text-xs text-gray-600 mb-1">Chunks</p>
+                          <p className="text-lg font-semibold text-gray-900">
+                            {doc.chunk_count}
+                          </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <p className="text-xs text-gray-600 mb-1">Processing Time</p>
+                          <p className="text-lg font-semibold text-gray-900">
+                            {doc.processing_time_seconds}s
+                          </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <p className="text-xs text-gray-600 mb-1">Firebase</p>
+                          <p className="text-lg font-semibold text-gray-900">
+                            {doc.firebase_enabled ? '✓ Yes' : '✗ No'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            // Single document (backward compatibility)
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
           {/* Header */}
           <div className="bg-green-50 border-b border-green-200 px-6 py-4">
             <div className="flex items-center space-x-3">
@@ -202,7 +324,7 @@ export default function DocumentUpload({ onDocumentUploaded }: DocumentUploadPro
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

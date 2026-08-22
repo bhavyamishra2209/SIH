@@ -70,37 +70,95 @@ class TesseractOCR(OCREngine):
     
     def _preprocess_image(self, image: Image.Image) -> Image.Image:
         """
-        Preprocess image for better OCR results.
+        Enhanced preprocessing for better OCR results.
+        Addresses ISSUE 1 root causes:
+        - Upscales to 300 DPI equivalent
+        - Applies Otsu binarization
+        - Deskews image
+        - Removes noise
         
         Args:
             image: Original PIL Image
             
         Returns:
-            Preprocessed PIL Image
+            Preprocessed PIL Image optimized for Tesseract
         """
         try:
             from PIL import ImageEnhance, ImageFilter
+            import cv2
+            import numpy as np
             
-            # Convert to grayscale if not already
-            if image.mode != 'L':
-                image = image.convert('L')
+            # Convert PIL to numpy for OpenCV operations
+            img_array = np.array(image)
             
-            # Increase contrast
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(2.0)
+            # 1. RESOLUTION UPSCALING - Tesseract needs ~300 DPI
+            # If image is small (< 1000px width), upscale it
+            height, width = img_array.shape[:2] if len(img_array.shape) == 2 else (img_array.shape[0], img_array.shape[1])
+            if width < 1000:
+                scale_factor = 1500 / width  # Target ~1500px width for 300 DPI equivalent
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                img_array = cv2.resize(img_array, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+                logger.debug(f"Upscaled image from {width}x{height} to {new_width}x{new_height}")
             
-            # Sharpen the image
+            # 2. GRAYSCALE CONVERSION
+            if len(img_array.shape) == 3:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_array
+            
+            # 3. NOISE REMOVAL - Gaussian blur before thresholding
+            denoised = cv2.GaussianBlur(gray, (5, 5), 0)
+            
+            # 4. OTSU'S BINARIZATION - Critical for handling varying lighting
+            # This automatically determines optimal threshold
+            _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # 5. DESKEWING - Fix rotated/skewed scans
+            # Detect text orientation and rotate if needed
+            coords = np.column_stack(np.where(binary > 0))
+            if len(coords) > 0:
+                angle = cv2.minAreaRect(coords)[-1]
+                # Correct angle calculation
+                if angle < -45:
+                    angle = 90 + angle
+                elif angle > 45:
+                    angle = angle - 90
+                
+                # Only deskew if angle is significant (> 0.5 degrees)
+                if abs(angle) > 0.5:
+                    (h, w) = binary.shape[:2]
+                    center = (w // 2, h // 2)
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    binary = cv2.warpAffine(binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+                    logger.debug(f"Deskewed image by {angle:.2f} degrees")
+            
+            # 6. MORPHOLOGICAL OPERATIONS - Remove small noise
+            kernel = np.ones((2, 2), np.uint8)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+            
+            # 7. FINAL ENHANCEMENT - Slight sharpening
+            # Convert back to PIL for final enhancement
+            image = Image.fromarray(binary)
             image = image.filter(ImageFilter.SHARPEN)
             
-            # Remove noise
-            image = image.filter(ImageFilter.MedianFilter(size=3))
-            
-            logger.debug("Image preprocessing completed")
+            logger.debug("Enhanced preprocessing completed: upscale + Otsu + deskew + denoise")
             return image
             
         except Exception as e:
-            logger.warning(f"Image preprocessing failed: {e}, using original")
-            return image
+            logger.warning(f"Enhanced preprocessing failed: {e}, using basic preprocessing")
+            # Fallback to basic preprocessing
+            try:
+                from PIL import ImageEnhance, ImageFilter
+                if image.mode != 'L':
+                    image = image.convert('L')
+                enhancer = ImageEnhance.Contrast(image)
+                image = enhancer.enhance(2.0)
+                image = image.filter(ImageFilter.SHARPEN)
+                return image
+            except:
+                logger.error("All preprocessing failed, using original image")
+                return image
     
     def extract_text(self, image: Image.Image) -> Tuple[str, float]:
         """Extract text with average confidence."""
@@ -109,9 +167,12 @@ class TesseractOCR(OCREngine):
             image = self._preprocess_image(image)
             
             # Get detailed data with confidence scores
+            # PSM 6 = Assume a single uniform block of text (ideal for documents/forms)
+            # PSM 3 (default) is for fully automatic page segmentation
             data = self.pytesseract.image_to_data(
                 image, 
-                lang=self.language, 
+                lang=self.language,
+                config='--psm 6',  # ISSUE 1 FIX: PSM mode for structured documents
                 output_type=self.pytesseract.Output.DICT
             )
             
@@ -197,23 +258,69 @@ class EasyOCREngine(OCREngine):
             )
     
     def _preprocess_image(self, image: Image.Image) -> Image.Image:
-        """Preprocess image for better OCR results."""
+        """Enhanced preprocessing for better OCR results (same as TesseractOCR)."""
         try:
             from PIL import ImageEnhance, ImageFilter
+            import cv2
+            import numpy as np
             
-            if image.mode != 'L':
-                image = image.convert('L')
+            img_array = np.array(image)
             
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(2.0)
+            # 1. Resolution upscaling
+            height, width = img_array.shape[:2] if len(img_array.shape) == 2 else (img_array.shape[0], img_array.shape[1])
+            if width < 1000:
+                scale_factor = 1500 / width
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                img_array = cv2.resize(img_array, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
             
+            # 2. Grayscale
+            if len(img_array.shape) == 3:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_array
+            
+            # 3. Denoise
+            denoised = cv2.GaussianBlur(gray, (5, 5), 0)
+            
+            # 4. Otsu binarization
+            _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # 5. Deskew
+            coords = np.column_stack(np.where(binary > 0))
+            if len(coords) > 0:
+                angle = cv2.minAreaRect(coords)[-1]
+                if angle < -45:
+                    angle = 90 + angle
+                elif angle > 45:
+                    angle = angle - 90
+                if abs(angle) > 0.5:
+                    (h, w) = binary.shape[:2]
+                    center = (w // 2, h // 2)
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    binary = cv2.warpAffine(binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+            
+            # 6. Morphological operations
+            kernel = np.ones((2, 2), np.uint8)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+            
+            # 7. Convert back to PIL and sharpen
+            image = Image.fromarray(binary)
             image = image.filter(ImageFilter.SHARPEN)
-            image = image.filter(ImageFilter.MedianFilter(size=3))
             
             return image
         except Exception as e:
-            logger.warning(f"Image preprocessing failed: {e}")
-            return image
+            logger.warning(f"Enhanced preprocessing failed: {e}")
+            try:
+                from PIL import ImageEnhance, ImageFilter
+                if image.mode != 'L':
+                    image = image.convert('L')
+                enhancer = ImageEnhance.Contrast(image)
+                image = enhancer.enhance(2.0)
+                image = image.filter(ImageFilter.SHARPEN)
+                return image
+            except:
+                return image
     
     def extract_text(self, image: Image.Image) -> Tuple[str, float]:
         """Extract text with average confidence."""

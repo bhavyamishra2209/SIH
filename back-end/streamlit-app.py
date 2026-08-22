@@ -43,6 +43,52 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ISSUE 3 FIX: Ensure chat/text input has proper contrast
+# This CSS ensures text is visible regardless of theme (light/dark mode)
+st.markdown("""
+<style>
+    /* Fix text input visibility - ensure proper contrast */
+    .stTextInput > div > div > input {
+        color: #000000 !important;  /* Black text for light theme */
+        background-color: #FFFFFF !important;  /* White background */
+    }
+    
+    /* Dark mode support */
+    @media (prefers-color-scheme: dark) {
+        .stTextInput > div > div > input {
+            color: #FFFFFF !important;  /* White text for dark theme */
+            background-color: #262730 !important;  /* Dark background */
+        }
+    }
+    
+    /* Text area (for multi-line inputs) */
+    .stTextArea > div > div > textarea {
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
+    }
+    
+    @media (prefers-color-scheme: dark) {
+        .stTextArea > div > div > textarea {
+            color: #FFFFFF !important;
+            background-color: #262730 !important;
+        }
+    }
+    
+    /* Chat input (st.chat_input) */
+    .stChatInput > div > div > input {
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
+    }
+    
+    @media (prefers-color-scheme: dark) {
+        .stChatInput > div > div > input {
+            color: #FFFFFF !important;
+            background-color: #262730 !important;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # Add spaCy model download for cloud deployment
 @st.cache_resource
@@ -109,12 +155,29 @@ def main():
             chunk_size = st.slider("Chunk Size", min_value=500, max_value=5000, value=2000, step=500)
         chunk_overlap = st.slider("Chunk Overlap", min_value=0, max_value=500, value=200, step=50)
         
-        uploaded_file = st.file_uploader("Choose a document file", type=["pdf", "txt", "docx", "md"])
+        uploaded_file = st.file_uploader(
+            "Choose document files", 
+            type=["pdf", "txt", "docx", "md", "jpg", "jpeg", "png"],
+            accept_multiple_files=True  # ISSUE 4 FIX: Multiple file upload
+        )
         
-        if uploaded_file is not None:
-            with st.spinner('Processing document with knowledge graph enhancement...'):
-                result = process_uploaded_document_with_kg(uploaded_file, enhancer, chunk_size=chunk_size, chunk_overlap=chunk_overlap, chunking_mode=chunking_mode, task_type="summary")
-                st.success(result)
+        if uploaded_file is not None and len(uploaded_file) > 0:
+            with st.spinner(f'Processing {len(uploaded_file)} document(s) with knowledge graph enhancement...'):
+                results = []
+                for file in uploaded_file:
+                    result = process_uploaded_document_with_kg(
+                        file, enhancer, 
+                        chunk_size=chunk_size, 
+                        chunk_overlap=chunk_overlap, 
+                        chunking_mode=chunking_mode, 
+                        task_type="summary"
+                    )
+                    results.append((file.name, result))
+                
+                # Display results for each file
+                for filename, result in results:
+                    st.success(f"✓ {filename}: {result}")
+                
                 st.session_state.document_count = rag_engine.count_documents()
                 kg_stats = knowledge_graph.statistics()
                 st.info(f"Knowledge graph now has {kg_stats['num_entities']} entities and {kg_stats['num_relations']} relations")

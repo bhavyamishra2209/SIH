@@ -141,202 +141,225 @@ class RAGAPIRouter:
                 logger.error(f"Error adding documents: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to add documents: {str(e)}")
 
-        @self.app.post("/upload", response_model=Dict[str, Any], summary="Upload and process document files")
+        @self.app.post("/upload", response_model=List[Dict[str, Any]], summary="Upload and process document files")
         async def upload_document(
-            file: UploadFile = File(...),
+            files: List[UploadFile] = File(...),
             chunk_size: int = Query(1000, ge=100, le=5000),
             chunk_overlap: int = Query(200, ge=0, le=500)
         ):
             """
-            Upload and process a document file.
+            Upload and process one or more document files.
+            
+            ISSUE 4 FIX: Supports multiple file uploads simultaneously.
 
-            - **file**: Document file to upload (PDF, TXT, DOCX, JPG, PNG, etc.)
+            - **files**: Document files to upload (PDF, TXT, DOCX, JPG, PNG, etc.)
             - **chunk_size**: Size of text chunks
             - **chunk_overlap**: Overlap between chunks
 
             Returns:
-                Status and number of chunks extracted
+                List of results for each document (status, document_id, extracted fields, etc.)
             """
-            doc_id = str(uuid.uuid4())
+            all_results = []
             
-            # Use Firebase if available, otherwise work in-memory
-            if FIREBASE_AVAILABLE:
-                try:
-                    db = get_db()
-                    doc_ref = db.collection("documents").document(doc_id)
-                except:
-                    logger.warning("Firebase connection failed, continuing without it")
+            # Process each file independently
+            for file in files:
+                doc_id = str(uuid.uuid4())
+                
+                # Use Firebase if available
+                if FIREBASE_AVAILABLE:
+                    try:
+                        db = get_db()
+                        doc_ref = db.collection("documents").document(doc_id)
+                    except:
+                        logger.warning(f"Firebase connection failed for {file.filename}")
+                        db = None
+                        doc_ref = None
+                else:
                     db = None
                     doc_ref = None
-            else:
-                db = None
-                doc_ref = None
-
-            try:
-                # Import here to avoid circular imports
-                from document.processor import DocumentProcessor
-
-                start_time = time.time()
-                content = await file.read()
-                ext = os.path.splitext(file.filename)[1].lower()
-
-                # Create the Firestore record if Firebase available
-                if doc_ref:
-                    try:
-                        doc_ref.set({
-                            "filename": file.filename,
-                            "status": "UPLOADED",
-                            "upload_time": datetime.datetime.utcnow(),
-                            "document_id": doc_id,
-                        })
-                    except:
-                        logger.warning("Could not write to Firebase, continuing")
-
-                
-                # Create temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
-                    temp_file.write(content)
-                    temp_path = temp_file.name
 
                 try:
-                    # --- P1: OCR branch for images, existing processor for the rest ---
-                    if ext in (".jpg", ".jpeg", ".png"):
-                        if doc_ref:
-                            try:
-                                doc_ref.update({"status": "OCR"})
-                            except:
-                                pass
-                        
-                        # Open image, extract text, then close immediately
-                        image = Image.open(temp_path)
-                        try:
-                            text, ocr_confidence = extract_text_from_image(image)
-                        finally:
-                            image.close()  # Always close the image file handle
+                    # Import here to avoid circular imports
+                    from document.processor import DocumentProcessor
 
-                        if not text.strip():
+                    start_time = time.time()
+                    content = await file.read()
+                    ext = os.path.splitext(file.filename)[1].lower()
+
+                    # Create the Firestore record if Firebase available
+                    if doc_ref:
+                        try:
+                            doc_ref.set({
+                                "filename": file.filename,
+                                "status": "UPLOADED",
+                                "upload_time": datetime.datetime.utcnow(),
+                                "document_id": doc_id,
+                            })
+                        except:
+                            logger.warning(f"Could not write to Firebase for {file.filename}")
+
+                    
+                    # Create temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+                        temp_file.write(content)
+                        temp_path = temp_file.name
+
+                    try:
+                        # --- P1: OCR branch for images, existing processor for the rest ---
+                        if ext in (".jpg", ".jpeg", ".png"):
                             if doc_ref:
                                 try:
-                                    doc_ref.update({"status": "FAILED", "error": "No text extracted via OCR"})
+                                    doc_ref.update({"status": "OCR"})
                                 except:
                                     pass
-                            return {
+                            
+                            # Open image, extract text, then close immediately
+                            image = Image.open(temp_path)
+                            try:
+                                text, ocr_confidence = extract_text_from_image(image)
+                            finally:
+                                image.close()  # Always close the image file handle
+
+                            if not text.strip():
+                                if doc_ref:
+                                    try:
+                                        doc_ref.update({"status": "FAILED", "error": "No text extracted via OCR"})
+                                    except:
+                                        pass
+                                all_results.append({
+                                    "filename": file.filename,
+                                    "document_id": doc_id,
+                                    "status": "warning",
+                                    "message": "No text extracted from image"
+                                })
+                                continue
+
+                            chunks = [text]
+                            chunk_metadata = [{
+                                "filename": file.filename,
+                                "source": file.filename,
+                                "ocr_confidence": ocr_confidence,
+                            }]
+                            if doc_ref:
+                                try:
+                                    doc_ref.update({"ocr_confidence": ocr_confidence})
+                                except:
+                                    pass
+                        else:
+                            if doc_ref:
+                                try:
+                                    doc_ref.update({"status": "EXTRACTING"})
+                                except:
+                                    pass
+                            processor = DocumentProcessor(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                            chunks, chunk_metadata = processor.process_file(
+                                temp_path,
+                                metadata={"filename": file.filename, "source": file.filename}
+                            )
+
+                        if not chunks:
+                            if doc_ref:
+                                try:
+                                    doc_ref.update({"status": "FAILED", "error": "No text extracted from document"})
+                                except:
+                                    pass
+                            all_results.append({
+                                "filename": file.filename,
+                                "document_id": doc_id,
                                 "status": "warning",
-                                "message": "No text extracted from image"
-                            }
+                                "message": "No text extracted from document"
+                            })
+                            continue
 
-                        chunks = [text]
-                        chunk_metadata = [{
+                        full_text = " ".join(chunks)
+
+                        # --- P2: classification ---
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "CLASSIFYING"})
+                            except:
+                                pass
+                        doc_type, classification_confidence = self.classifier.classify(full_text)
+                        if doc_ref:
+                            try:
+                                doc_ref.update({
+                                    "document_type": doc_type,
+                                    "classification_confidence": classification_confidence,
+                                })
+                            except:
+                                pass
+
+                        # --- P3: structured field extraction ---
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "EXTRACTING_FIELDS"})
+                            except:
+                                pass
+                        extracted_fields = self.extractor.extract(chunks, chunk_metadata, doc_type, file.filename)
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"extracted_fields": extracted_fields})
+                            except:
+                                pass
+
+                        # Stamp every chunk with real identifiers
+                        for m in chunk_metadata:
+                            m["document_id"] = doc_id
+                            m["document_type"] = doc_type
+                            m["source"] = file.filename
+
+                        # Add chunks to RAG engine
+                        if doc_ref:
+                            try:
+                                doc_ref.update({"status": "INDEXING"})
+                            except:
+                                pass
+                        doc_ids = self.rag_engine.add_documents(chunks, chunk_metadata)
+
+                        if doc_ref:
+                            try:
+                                doc_ref.update({
+                                    "status": "COMPLETED",
+                                    "chunk_count": len(chunks),
+                                    "chunk_ids": doc_ids,
+                                })
+                            except:
+                                pass
+
+                        # Add successful result to list
+                        all_results.append({
                             "filename": file.filename,
-                            "source": file.filename,
-                            "ocr_confidence": ocr_confidence,
-                        }]
-                        if doc_ref:
-                            try:
-                                doc_ref.update({"ocr_confidence": ocr_confidence})
-                            except:
-                                pass
-                    else:
-                        if doc_ref:
-                            try:
-                                doc_ref.update({"status": "EXTRACTING"})
-                            except:
-                                pass
-                        processor = DocumentProcessor(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                        chunks, chunk_metadata = processor.process_file(
-                            temp_path,
-                            metadata={"filename": file.filename, "source": file.filename}
-                        )
-
-                    if not chunks:
-                        if doc_ref:
-                            try:
-                                doc_ref.update({"status": "FAILED", "error": "No text extracted from document"})
-                            except:
-                                pass
-                        return {
-                            "status": "warning",
-                            "message": "No text extracted from document"
-                        }
-
-                    full_text = " ".join(chunks)
-
-                    # --- P2: classification ---
+                            "status": "success",
+                            "message": f"Processed document into {len(chunks)} chunks",
+                            "document_id": doc_id,
+                            "document_type": doc_type,
+                            "classification_confidence": float(classification_confidence),
+                            "extracted_fields": extracted_fields,
+                            "chunk_count": len(chunks),
+                            "document_ids": doc_ids,
+                            "processing_time_seconds": round(time.time() - start_time, 2),
+                            "firebase_enabled": FIREBASE_AVAILABLE
+                        })
+                    finally:
+                        # Clean up temporary file
+                        os.unlink(temp_path)
+                except Exception as e:
+                    logger.error(f"Error processing document {file.filename}: {e}")
                     if doc_ref:
                         try:
-                            doc_ref.update({"status": "CLASSIFYING"})
+                            doc_ref.update({"status": "FAILED", "error": str(e)})
                         except:
                             pass
-                    doc_type, classification_confidence = self.classifier.classify(full_text)
-                    if doc_ref:
-                        try:
-                            doc_ref.update({
-                                "document_type": doc_type,
-                                "classification_confidence": classification_confidence,
-                            })
-                        except:
-                            pass
-
-                    # --- P3: structured field extraction ---
-                    if doc_ref:
-                        try:
-                            doc_ref.update({"status": "EXTRACTING_FIELDS"})
-                        except:
-                            pass
-                    extracted_fields = self.extractor.extract(chunks, chunk_metadata, doc_type, file.filename)
-                    if doc_ref:
-                        try:
-                            doc_ref.update({"extracted_fields": extracted_fields})
-                        except:
-                            pass
-
-                    # Stamp every chunk with real identifiers
-                    for m in chunk_metadata:
-                        m["document_id"] = doc_id
-                        m["document_type"] = doc_type
-                        m["source"] = file.filename
-
-                    # Add chunks to RAG engine
-                    if doc_ref:
-                        try:
-                            doc_ref.update({"status": "INDEXING"})
-                        except:
-                            pass
-                    doc_ids = self.rag_engine.add_documents(chunks, chunk_metadata)
-
-                    if doc_ref:
-                        try:
-                            doc_ref.update({
-                                "status": "COMPLETED",
-                                "chunk_count": len(chunks),
-                                "chunk_ids": doc_ids,
-                            })
-                        except:
-                            pass
-
-                    return {
-                        "status": "success",
-                        "message": f"Processed document into {len(chunks)} chunks",
+                    # Add error result to list (don't fail entire batch)
+                    all_results.append({
+                        "filename": file.filename,
                         "document_id": doc_id,
-                        "document_type": doc_type,
-                        "classification_confidence": float(classification_confidence),
-                        "extracted_fields": extracted_fields,
-                        "chunk_count": len(chunks),
-                        "document_ids": doc_ids,
-                        "processing_time_seconds": round(time.time() - start_time, 2),
-                        "firebase_enabled": FIREBASE_AVAILABLE
-                    }
-                finally:
-                    # Clean up temporary file
-                    os.unlink(temp_path)
-            except Exception as e:
-                logger.error(f"Error processing document: {e}")
-                if doc_ref:
-                    try:
-                        doc_ref.update({"status": "FAILED", "error": str(e)})
-                    except:
-                        pass
-                raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+                        "status": "error",
+                        "message": f"Failed to process document: {str(e)}"
+                    })
+            
+            # Return list of results for all files
+            return all_results
 
         @self.app.get("/documents/{document_id}/status", summary="Get document processing status")
         async def get_document_status(document_id: str):

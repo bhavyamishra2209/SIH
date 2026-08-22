@@ -23,6 +23,7 @@ Pillow>=9.0.0
 # OCR (P1)
 pytesseract>=0.3.10
 easyocr>=1.7.0
+opencv-python>=4.8.0  # For enhanced OCR preprocessing (Otsu, deskewing, etc.)
 
 # Text processing and matching (P7, P14)
 rapidfuzz>=3.0.0
