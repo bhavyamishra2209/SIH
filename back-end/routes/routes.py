@@ -160,7 +160,7 @@ class RAGAPIRouter:
             if "/upload" in openapi_schema.get("paths", {}):
                 upload_endpoint = openapi_schema["paths"]["/upload"]["post"]
                 
-                # Override request body schema
+                # Override request body schema with proper multiple file support
                 upload_endpoint["requestBody"] = {
                     "required": True,
                     "content": {
@@ -175,20 +175,27 @@ class RAGAPIRouter:
                                             "type": "string",
                                             "format": "binary"
                                         },
-                                        "description": "Select multiple files (PDF, DOCX, PNG, JPG, TXT)"
+                                        "description": "Multiple document files"
                                     },
                                     "chunk_size": {
                                         "type": "integer",
                                         "default": 1000,
                                         "minimum": 100,
-                                        "maximum": 5000
+                                        "maximum": 5000,
+                                        "description": "Size of text chunks"
                                     },
                                     "chunk_overlap": {
                                         "type": "integer",
                                         "default": 200,
                                         "minimum": 0,
-                                        "maximum": 500
+                                        "maximum": 500,
+                                        "description": "Overlap between chunks"
                                     }
+                                }
+                            },
+                            "encoding": {
+                                "files": {
+                                    "contentType": "application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, image/png, image/jpeg, text/plain"
                                 }
                             }
                         }
