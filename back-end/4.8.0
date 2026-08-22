@@ -1,0 +1,9 @@
+Collecting opencv-python
+  Downloading opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl.metadata (20 kB)
+Requirement already satisfied: numpy>=2 in C:\Users\bhavy\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from opencv-python) (2.5.1)
+Downloading opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl (44.0 MB)
+   ---------                   15.5/44.0 MB 104.7 kB/s eta 0:04:33
+Resuming download opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl (15.5 MB/44.0 MB)
+   -------------------------------- 44.0/44.0 MB 1.1 MB/s  0:00:32
+Installing collected packages: opencv-python
+Successfully installed opencv-python-5.0.0.93

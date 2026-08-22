@@ -143,9 +143,9 @@ class RAGAPIRouter:
 
         @self.app.post("/upload", response_model=List[Dict[str, Any]], summary="Upload and process document files")
         async def upload_document(
-            files: List[UploadFile] = File(...),
-            chunk_size: int = Query(1000, ge=100, le=5000),
-            chunk_overlap: int = Query(200, ge=0, le=500)
+            files: List[UploadFile] = File(..., description="One or more document files to upload"),
+            chunk_size: int = Query(1000, ge=100, le=5000, description="Size of text chunks"),
+            chunk_overlap: int = Query(200, ge=0, le=500, description="Overlap between chunks")
         ):
             """
             Upload and process one or more document files.
